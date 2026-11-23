@@ -381,6 +381,9 @@
                 const v = data.validation || {};
                 const errs = v.errors || [];
 
+                $('sourceList').previousElementSibling.textContent =
+                    data.insufficient ? '검색된 기사 (답변에는 사용되지 않음)' : '참조 출처 목록';
+
                 // 검색 키워드·수집 현황
                 const kw = $('kwNote');
                 if ((data.keywords || []).length) {
@@ -488,8 +491,6 @@ $('metricChunkCount').textContent = (data.insufficient ? 0 : (data.chunk_count ?
 
                     const result = await pollAsk(data.job_id);
                     renderResult(result);
-                    $('metricSourceCount').textContent = data.insufficient ? 0 : (data.source_count ?? sources.length);
-                    $('metricChunkCount').textContent = (data.insufficient ? 0 : (data.chunk_count ?? 0)) + '개';
                 } catch (error) {
                     console.error(error);
                     $('loadingState').hidden = true;
