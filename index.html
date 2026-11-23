@@ -394,8 +394,8 @@
                 }
 
                 // 요약 지표
-$('metricSourceCount').textContent = data.insufficient ? 0 : (data.source_count ?? sources.length);
-$('metricChunkCount').textContent = (data.insufficient ? 0 : (data.chunk_count ?? 0)) + '개';
+                $('metricSourceCount').textContent = data.insufficient ? 0 : (data.source_count ?? sources.length);
+                $('metricChunkCount').textContent = (data.insufficient ? 0 : (data.chunk_count ?? 0)) + '개';
                 $('citeState').textContent = data.insufficient ? '해당 없음' : (v.ok ? '통과' : ('확인 필요 (' + errs.length + ')'));
                 $('modelState').textContent = (data.generation_ms != null) ? (data.generation_ms / 1000).toFixed(1) + '초' : '-';
 
@@ -491,6 +491,8 @@ $('metricChunkCount').textContent = (data.insufficient ? 0 : (data.chunk_count ?
 
                     const result = await pollAsk(data.job_id);
                     renderResult(result);
+                    $('loadingState').hidden = true;
+                    $('result').hidden = false;
                 } catch (error) {
                     console.error(error);
                     $('loadingState').hidden = true;
@@ -500,10 +502,6 @@ $('metricChunkCount').textContent = (data.insufficient ? 0 : (data.chunk_count ?
                     asking = false;
                     btn.disabled = false;
                 }
-                $('sourceList').previousElementSibling.textContent =
-                data.insufficient ? '검색된 기사 (답변에는 사용되지 않음)' : '참조 출처 목록';
-                $('loadingState').hidden = true;
-                $('result').hidden = false;
             });
         </script>
     </body>
