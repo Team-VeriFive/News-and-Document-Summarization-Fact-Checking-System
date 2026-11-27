@@ -1,3 +1,4 @@
+
 <html lang="ko">
     <head>
         <meta charset="UTF-8">
@@ -197,7 +198,14 @@
             summary { cursor: pointer; font-size: 12px; color: var(--green) }
             .snippet { margin: 6px 0 0; padding: 6px 10px; border-left: 3px solid var(--line); color: #4b5a53; font-size: 12px; white-space: pre-wrap }
 
-            .notice.info { background: #eaf4ef; border-color: var(--line); color: var(--ink) }
+                        .notice.info { background: #eaf4ef; border-color: var(--line); color: var(--ink) }
+            .verdict { display: flex; align-items: center; gap: 14px; padding: 16px 20px; border-radius: 8px; border: 1px solid; margin-bottom: 18px }
+            .verdict .v-emoji { font-size: 34px; line-height: 1 }
+            .verdict .v-label { font-size: 20px; font-weight: 700 }
+            .verdict .v-desc { font-size: 12px; opacity: .8 }
+            .verdict.TRUE { background: #e6f5ed; border-color: #7fcba3; color: #0f5c3b }
+            .verdict.FALSE { background: #fdecea; border-color: #f2b8b5; color: #8c1d18 }
+            .verdict.INSUFFICIENT { background: #fff6e0; border-color: #f0d58a; color: #6b4e00 }
             .progress-box { margin-top: 0; text-align: left }
         </style>
     </head>
@@ -217,6 +225,7 @@
                 <nav class="nav">
                     <button id="navQa" class="active" onclick="switchTab('qa')">▤ 질의응답</button>
                     <button id="navGuide" onclick="switchTab('guide')">📘 연결가이드</button>
+                    <button id="navEval" onclick="switchTab('evalPage')">📊 평가</button>
                 </nav>
             </aside>
             <main>
@@ -240,6 +249,9 @@
                             <label class="check">
                                 <input id="compare" type="checkbox" checked>일반 LLM과 비교
                             </label>
+                            <label class="check">                                                         <!-- ★ 이 3줄 추가 -->
+                                <input id="compareDb" type="checkbox">DB 보관 기사만 쓴 RAG와 비교
+                            </label>
                             <button class="primary" id="generateButton" type="submit">➤ 근거 수집 및 답변 생성</button>
                         </div>
                     </form>
@@ -262,6 +274,23 @@
                         <h3>2. 답변 생성</h3>
                         <p>이번 질문으로 수집한 근거 기사 청크만 검색해 <code>RAGGenerator.create_response</code>로 답변을 만들고, <code>[근거 N]</code> 출처와 자동 검사 결과를 결과창에 표시합니다.</p>
                     </div>
+                </section>
+
+                <!-- 3. 평가 화면 -->
+                <section id="evalPage" class="page">
+                    <div class="hero">
+                        <div class="eyebrow">EVALUATION</div>
+                        <h1>일반 LLM과 근거 기반 답변,<br>수치로 비교하기</h1>
+                        <p>질문을 한 줄에 하나씩 입력하세요(최대 2000개). 정답 문장이 있으면 질문 뒤에 <code>|||</code>로 이어 붙이면 정답 유사도도 계산합니다.</p>
+                    </div>
+                    <form id="evalForm" class="question-panel">
+                        <textarea id="evalInput" placeholder="질문 1&#10;질문 2 ||| 정답 문장"></textarea>
+                        <div class="submit-row">
+                            <span id="evalStatus" style="color:var(--muted);font-size:12px"></span>
+                            <button class="primary" id="evalButton" type="submit">▶ 평가 실행</button>
+                        </div>
+                    </form>
+                    <div id="evalSummary" hidden style="margin-top:22px"></div>
                 </section>
             </main>
         </div>
@@ -295,14 +324,38 @@
                 </div>
 
                 <div id="insufficientNote" class="notice" hidden></div>
+                <div id="verdictBox" class="verdict" hidden>
+    <span id="verdictEmoji" class="v-emoji"></span>
+    <div>
+        <div id="verdictLabel" class="v-label"></div>
+        <div id="verdictDesc" class="v-desc"></div>
+    </div>
+</div>
 
-                <h3>근거 기반 답변</h3>
+                <h3>실시간 답변</h3>
                 <div id="answerBox" class="answer-box"></div>
                 <div id="checkErrors" class="notice warn" hidden></div>
 
+                 <div id="dbBox" hidden style="margin-top: 20px;">
+                    <h3>RAG를 사용한 답변(DB에 없으면 실시간 답변만 생성)</h3>
+                    <div class="answer-box"><p id="dbText" class="pre" style="margin:0"></p></div>
+                    <p id="dbMeta" class="src-meta"></p>
+                </div>
+
                 <div id="plainBox" hidden style="margin-top: 20px;">
-                    <h3>일반 LLM 답변 (근거 없음)</h3>
+                    <h3>RAG를 사용하지 않은 답변</h3>
                     <div class="answer-box"><p id="plainText" class="pre" style="margin:0"></p></div>
+                </div>
+
+                 <div id="claimEvidenceBox" hidden style="margin-top: 20px;">
+                    <h3>주장별 근거 검색</h3>
+                    <p class="src-meta">유사도는 관련 문단을 찾는 점수이며 참·거짓 판정값이 아닙니다.</p>
+                    <div id="claimEvidenceList"></div>
+                </div>
+
+                <div id="evalBox" hidden style="margin-top: 20px;">
+                    <h3>평가 지표</h3>
+                    <div id="evalTable" class="answer-box"></div>
                 </div>
 
                 <div style="margin-top: 20px; border-top: 1px solid var(--line); padding-top: 15px;">
@@ -313,9 +366,19 @@
         </dialog>
 
         <script>
+            // 고정 방식: 기존 ngrok 공개 주소 사용
+            const API_BASE = 'https://shifting-quotable-contend.ngrok-free.dev';
+            async function connectBackend() { return API_BASE; }
+
+            function apiFetch(apiBase, path, options = {}) {
+                const headers = new Headers(options.headers);
+                headers.set('ngrok-skip-browser-warning', '1');
+                return fetch(apiBase + path, { ...options, headers });
+            }
+
             const $ = id => document.getElementById(id);
 
-            const TABS = { qa: 'navQa', guide: 'navGuide' };
+            const TABS = { qa: 'navQa', guide: 'navGuide', evalPage: 'navEval' };
             function switchTab(tabName) {
                 Object.keys(TABS).forEach(name => {
                     $(name).classList.toggle('active', name === tabName);
@@ -376,6 +439,61 @@
                 return item;
             }
 
+            // ── 평가 지표 표시 (label, 키, 형식, RAG 전용 여부)
+            const EVAL_ROWS = [
+                ['근거 충족률 (답변 문장이 근거와 일치)', 'support_rate', 'pct', false],
+                ['평균 근거 유사도', 'mean_support', 'num', false],
+                ['질문 관련도', 'answer_relevancy', 'num', false],
+                ['인용 정확도', 'citation_precision', 'pct', true],
+                ['인용 포함 비율', 'citation_coverage', 'pct', true],
+                ['정답 유사도 (정답 입력 시)', 'ref_sim', 'num', false],
+                ['생성 시간(초)', 'generation_ms', 'sec', false],
+            ];
+            function fmtMetric(v, kind) {
+                if (v === null || v === undefined) return '-';
+                if (kind === 'pct') return (v * 100).toFixed(0) + '%';
+                if (kind === 'sec') return (v / 1000).toFixed(1);
+                return Number(v).toFixed(2);
+            }
+            function makeTable(headers, rows) {
+                const t = el('table');
+                t.style.cssText = 'width:100%;border-collapse:collapse;font-size:13px';
+                const addRow = (cells, tag) => {
+                    const tr = el('tr');
+                    cells.forEach((c, i) => {
+                        const cell = el(tag, null, c);
+                        cell.style.cssText = 'padding:6px 8px;border-bottom:1px solid var(--line);text-align:' + (i ? 'right' : 'left');
+                        tr.appendChild(cell);
+                    });
+                    t.appendChild(tr);
+                };
+                addRow(headers, 'th');
+                rows.forEach(r => addRow(r, 'td'));
+                return t;
+            }
+            function metricRows(rag, plain, overall) {
+                const rows = EVAL_ROWS.map(([label, key, kind, ragOnly]) =>
+                    [label, fmtMetric(rag ? rag[key] : null, kind), ragOnly ? '-' : fmtMetric(plain ? plain[key] : null, kind)]);
+                rows.push(['RAG 종합점수 (가중 평균)', fmtMetric(overall, 'num'), '-']);
+                return rows;
+            }
+            function renderEval(ev) {
+                const box = $('evalBox');
+                if (!ev) { box.hidden = true; return; }
+                box.hidden = false;
+                const t = $('evalTable');
+                t.replaceChildren();
+                t.appendChild(makeTable(['지표', '근거 기반(RAG)', '일반 LLM'], metricRows(ev.rag, ev.plain, ev.rag.overall)));
+                                if (ev.rag.insufficient) t.appendChild(el('p', 'src-meta', '⚠ 근거 부족으로 RAG 답변 지표를 계산하지 않았습니다.'));
+                const c = ev.comparison || {};
+                if (c.support_gain !== null && c.support_gain !== undefined) {
+                    t.appendChild(el('p', 'src-meta', '근거 충족률 차이: ' + (c.support_gain * 100).toFixed(0) + '%p · 일반 LLM 답변 중 근거로 확인되지 않은 문장: '
+                        + fmtMetric(c.plain_unsupported_rate, 'pct')));
+                }
+                const bad = (ev.rag.unsupported_claims || []);
+                if (bad.length) t.appendChild(el('p', 'src-meta', '근거 미확인 문장(RAG): ' + bad.join(' / ')));
+            }
+
             function renderResult(data) {
                 const sources = data.sources || [];
                 const v = data.validation || {};
@@ -392,8 +510,25 @@
                 } else {
                     kw.hidden = true;
                 }
+                // 사실 여부 배지 (⭕ / ❌ / 🔺)
+const VERDICT_DESC = {
+    TRUE: '수집한 근거 기사가 입력한 내용을 뒷받침합니다.',
+    FALSE: '수집한 근거 기사가 입력한 내용과 다르게 보도하고 있습니다.',
+    INSUFFICIENT: '수집한 근거만으로는 사실 여부를 판단할 수 없습니다.',
+};
+const cv = data.claim_verdict;
+const vb = $('verdictBox');
+if (cv && VERDICT_DESC[cv.verdict]) {
+    vb.className = 'verdict ' + cv.verdict;     // 서버 값이 아닌 고정 키만 클래스로 사용
+    $('verdictEmoji').textContent = cv.emoji;
+    $('verdictLabel').textContent = cv.label;
+    $('verdictDesc').textContent = VERDICT_DESC[cv.verdict];
+    vb.hidden = false;
+} else {
+    vb.hidden = true;
+}
 
-                // 요약 지표
+                      // 요약 지표
                 $('metricSourceCount').textContent = data.insufficient ? 0 : (data.source_count ?? sources.length);
                 $('metricChunkCount').textContent = (data.insufficient ? 0 : (data.chunk_count ?? 0)) + '개';
                 $('citeState').textContent = data.insufficient ? '해당 없음' : (v.ok ? '통과' : ('확인 필요 (' + errs.length + ')'));
@@ -425,9 +560,24 @@
                 ce.hidden = data.insufficient || !errs.length;
                 if (!ce.hidden) ce.textContent = '⚠ 자동 검사 경고: ' + errs.join(' / ');
 
-                // 일반 LLM 비교 답변
+                // RAG를 사용하지 않은 답변
                 $('plainBox').hidden = !data.plain_answer;
                 if (data.plain_answer) $('plainText').textContent = data.plain_answer;
+
+                // DB 보관 기사만 쓴 RAG 답변
+                $('dbBox').hidden = !data.db_only;
+                if (data.db_only) {
+                    $('dbText').textContent = data.db_only.answer;
+                    $('dbMeta').textContent = data.db_only.insufficient
+                        ? data.db_only.insufficient_reason
+                        : data.db_only.sources.map(s =>
+                            '[근거 ' + s.number + '] ' + (s.published_at || '날짜 미확인') + ' ' + (s.press || '') + ' · ' + s.title
+                        ).join('  /  ');
+                }
+                // 주장별 근거 검색 답변
+                // $('claimEvidenceBox').hidden = !$('claimEvidence').checked;
+                renderEval(data.evaluation);
+
 
                 // 출처 목록
                 const list = $('sourceList');
@@ -441,14 +591,12 @@
             }
 
             // 작업 진행률 조회 (서버가 근거 수집→임베딩→답변 생성을 순서대로 처리)
-            async function pollAsk(jobId, onProgress) {
+            async function pollAsk(apiBase, jobId, onProgress) {
                 let failures = 0;
                 while (true) {
                     await new Promise(resolve => setTimeout(resolve, 700));
                     try {
-                        const res = await fetch('https://shifting-quotable-contend.ngrok-free.dev/api/ask/status/' + jobId, {
-                            headers: { 'ngrok-skip-browser-warning': '1' }
-                        });
+                        const res = await apiFetch(apiBase, '/api/ask/status/' + jobId);
                         const job = await res.json();
                         if (!res.ok) throw new Error(job.detail || '상태 조회 실패');
                         failures = 0;
@@ -463,7 +611,7 @@
                 }
             }
 
-            let asking = false;
+                        let asking = false;
             $('questionForm').addEventListener('submit', async event => {
                 event.preventDefault();
                 if (asking) return;
@@ -480,16 +628,17 @@
                 if (!$('resultDialog').open) $('resultDialog').showModal();
 
                 try {
-                    const res = await fetch('https://shifting-quotable-contend.ngrok-free.dev/api/ask', {
+                    const apiBase = await connectBackend();
+                    const res = await apiFetch(apiBase, '/api/ask', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': '1' },
-                        body: JSON.stringify({ question: question, compare: $('compare').checked })
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ question: question, compare: $('compare').checked, compare_db: $('compareDb').checked })
                     });
                     let data = null;
                     try { data = await res.json(); } catch (_) { /* JSON이 아닌 응답 */ }
                     if (!res.ok) throw new Error((data && data.detail) || ('서버 오류 (HTTP ' + res.status + ')'));
 
-                    const result = await pollAsk(data.job_id);
+                    const result = await pollAsk(apiBase, data.job_id);
                     renderResult(result);
                     $('loadingState').hidden = true;
                     $('result').hidden = false;
@@ -501,6 +650,102 @@
                 } finally {
                     asking = false;
                     btn.disabled = false;
+                }
+            });
+
+            function renderBatch(r, apiBase) {
+                const box = $('evalSummary');
+                box.replaceChildren();
+                box.hidden = false;
+                const s = r.summary || {}, rag = s.rag || {}, plain = s.plain || {};
+
+                box.appendChild(el('h3', null, '평가 결과 (질문 ' + (s.n || 0) + '개)'));
+                const rows = EVAL_ROWS.map(([label, key, kind, ragOnly]) =>
+                    [label, fmtMetric(rag[key], kind), ragOnly ? '-' : fmtMetric(plain[key], kind)]);
+                rows.push(['RAG 종합점수 (가중 평균)', fmtMetric(rag.overall, 'num'), '-']);
+                box.appendChild(makeTable(['지표', '근거 기반(RAG)', '일반 LLM'], rows));
+
+                box.appendChild(el('p', 'src-meta',
+                    '근거 부족 비율: ' + fmtMetric(s.insufficient_rate, 'pct') +
+                    ' · 자동 검사 통과율: ' + fmtMetric(s.validator_ok_rate, 'pct') +
+                    ' · RAG가 더 높은 질문 비율: ' + fmtMetric(s.support_win_rate, 'pct') +
+                    ' (비교 ' + (s.n_compared || 0) + '건)'));
+
+                const detail = (r.rows || []).map(x => x.error
+                    ? [x.question, '오류', '-', '-', x.error]
+                    : [x.question, x.status, fmtMetric(x.rag_support, 'pct'), fmtMetric(x.plain_support, 'pct'), x.reason || '']);
+                box.appendChild(el('h3', null, '질문별 결과'));
+                const wrap = el('div');
+                wrap.style.overflowX = 'auto';
+                wrap.appendChild(makeTable(['질문', '상태', 'RAG 충족률', '일반 LLM 충족률', '비고'], detail));
+                box.appendChild(wrap);
+
+                if (r.csv) {
+                    const id = r.csv.replace('eval_batch_', '').replace('.csv', '');
+                    const a = el('a', null, 'CSV 내려받기');
+                    const csvPath = '/api/eval/csv/' + encodeURIComponent(id);
+                    a.href = apiBase + csvPath;
+                    a.addEventListener('click', async event => {
+                        event.preventDefault();
+                        try {
+                            const res = await apiFetch(apiBase, csvPath);
+                            if (!res.ok) throw new Error('CSV 다운로드 실패 (HTTP ' + res.status + ')');
+                            const objectUrl = URL.createObjectURL(await res.blob());
+                            const download = document.createElement('a');
+                            download.href = objectUrl;
+                            download.download = r.csv;
+                            document.body.appendChild(download);
+                            download.click();
+                            download.remove();
+                            setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+                        } catch (error) {
+                            $('evalStatus').textContent = '❌ ' + (error.message || 'CSV 다운로드 실패');
+                        }
+                    });
+                    const p = el('p');
+                    p.appendChild(a);
+                    box.appendChild(p);
+                }
+            }
+
+            let evaluating = false;
+            $('evalForm').addEventListener('submit', async event => {
+                event.preventDefault();
+                if (evaluating) return;
+                const items = $('evalInput').value.split(String.fromCharCode(10))
+                    .map(l => l.trim()).filter(Boolean)
+                    .map(l => {
+                        const i = l.indexOf('|||');
+                        return i < 0 ? { question: l }
+                                     : { question: l.slice(0, i).trim(), reference: l.slice(i + 3).trim() };
+                    })
+                    .filter(it => it.question);
+                if (!items.length) { $('evalStatus').textContent = '질문을 입력해주세요.'; return; }
+
+                evaluating = true;
+                $('evalButton').disabled = true;
+                $('evalSummary').hidden = true;
+                $('evalStatus').textContent = '평가 요청 중...';
+                try {
+                    const apiBase = await connectBackend();
+                    const res = await apiFetch(apiBase, '/api/eval/batch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ items: items })
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.detail || ('서버 오류 (HTTP ' + res.status + ')'));
+                    const result = await pollAsk(apiBase, data.job_id, (pct, stage) => {
+                        $('evalStatus').textContent = pct + '% · ' + (stage || '');
+                    });
+                    $('evalStatus').textContent = '완료';
+                    renderBatch(result, apiBase);
+                } catch (error) {
+                    console.error(error);
+                    $('evalStatus').textContent = '❌ ' + (error.message || '오류가 발생했습니다.');
+                } finally {
+                    evaluating = false;
+                    $('evalButton').disabled = false;
                 }
             });
         </script>
